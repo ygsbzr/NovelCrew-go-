@@ -65,6 +65,10 @@ func AppendFile(distpath string, cnum int) {
 				if readerr == io.EOF {
 					result = strings.ReplaceAll(result, "<br/>", "\n")
 					result = strings.ReplaceAll(result, "聽", "")
+					result = strings.ReplaceAll(result, "&nbsp;", " ")
+					result = strings.ReplaceAll(result, "<br>", "\n")
+					result = strings.ReplaceAll(result, "</a>", "")
+					result = strings.ReplaceAll(result, "<a href=\"javascript:posterror();\" style=\"text-align:center;color:red;\">『如果章节错误，点此举报』", "")
 					dist.WriteString(result + "\n \n \n \n \n")
 					break
 				}

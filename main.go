@@ -13,17 +13,23 @@ import (
 )
 
 type Book struct {
-	baseburl      string
-	booknumber    string
-	chapternumber string
+	baseburl   string
+	booknumber string
 }
 type Config struct {
 	BaseurlC    string
 	Lastchapter int
+	BookWebUrl  string
 }
 
 func main() {
 	var baseurl string
+	var remap map[string]string = make(map[string]string)
+	remap["www.zhhbq.com"] = `<script>[\s\S]*?</div>([\s\S]*?)<script>`
+	remap["www.xbiquge.la"] = `([\s\S]*?)<p>`
+	remap["www.ddyueshu.com"] = `([\s\S]*?)<p>`
+	remap["www.qu-la.com"] = `([\s\S]*)`
+
 	var config Config
 	CreateDir("./tmp")
 	CreateDir("./dist")
@@ -37,16 +43,17 @@ func main() {
 		config = Config{
 			BaseurlC:    baseurl,
 			Lastchapter: 1,
+			BookWebUrl:  "",
 		}
 		configdata, _ := json.Marshal(config)
 		OpenFileAndWrite(configdata, "./config.json")
 	}
 	var mybook Book
-	fmt.Println("base", baseurl)
 	mybook.GetNewBook(baseurl)
+	config.BookWebUrl = mybook.baseburl
 	hrefs, len, bookname := mybook.GetAllChapter()
 	for i := config.Lastchapter; i <= len; i++ {
-		go AnalyisText(hrefs, chapterc, i, &config)
+		go AnalyisText(hrefs, chapterc, i, &config, remap[config.BookWebUrl])
 	}
 	for i := config.Lastchapter; i <= len; i++ {
 		fmt.Println(<-chapterc)
@@ -54,7 +61,7 @@ func main() {
 	fmt.Println("开始整合")
 	AppendFile("./dist/"+bookname, len)
 }
-func AnalyisText(hrefs []string, c chan string, i int, conf *Config) {
+func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string) {
 	filep, _ := os.Create("tmp/" + strconv.Itoa(i) + ".txt")
 	defer filep.Close()
 	var textresult string = ""
@@ -78,15 +85,18 @@ func AnalyisText(hrefs []string, c chan string, i int, conf *Config) {
 	}
 	splitc := "\n \n \n"
 	chapterNode := doc.Find("div#content")
-	findCPName := regexp.MustCompile(`<script>([\s\S]*?)</div>([\s\S]*?)<script>`)
+	if chapterNode.Length() == 0 {
+		chapterNode = doc.Find("div[id=chapter-title]~div")
+	}
+	findCPName := regexp.MustCompile(re)
 	chapter, reerr := chapterNode.Html()
 	if reerr != nil {
 		fmt.Println("reerr:", reerr)
 		return
 	}
-	realchapter := findCPName.FindAllStringSubmatch(chapter, -1)[0]
+	realchapter := findCPName.FindAllStringSubmatch(chapter, 1)[0]
 	chaptername := doc.Find("h1").Text()
-	article := realchapter[2]
+	article := realchapter[1]
 	textresult = textresult + chaptername + splitc + article
 	textresult = ConvertStringToUTF(textresult, "gbk", "utf-8")
 	filep.WriteString(textresult)
@@ -95,18 +105,14 @@ func AnalyisText(hrefs []string, c chan string, i int, conf *Config) {
 	defer res.Body.Close()
 }
 func (book *Book) GetNewBook(firsturl string) {
-	rep := regexp.MustCompile(`https://(.*?)/(.*?)/(.*?).html`)
+	rep := regexp.MustCompile(`https://(.*?)/(.*)/`)
 	data := rep.FindAllStringSubmatch(firsturl, 1)[0]
-	book.baseburl = "https://" + data[1]
+	book.baseburl = data[1]
 	book.booknumber = data[2]
-	book.chapternumber = data[3]
-}
-func (book *Book) ShowBook() {
-	fmt.Println(book.chapternumber)
 }
 func (book *Book) GetAllChapter() ([]string, int, string) {
 
-	res, err := http.Get(book.baseburl + "/" + book.booknumber + "/")
+	res, err := http.Get("https://" + book.baseburl + "/" + book.booknumber + "/")
 	fmt.Println("Get:", book.baseburl+"/"+book.booknumber+"/")
 	if err != nil {
 		fmt.Println("err:", err)
@@ -119,12 +125,17 @@ func (book *Book) GetAllChapter() ([]string, int, string) {
 	listnode := docp.Find("dd")
 	length := listnode.Length()
 	fmt.Println("len:", length)
+	if length == 0 {
+		listnode = docp.Find("li")
+		length = listnode.Length()
+		fmt.Println("len:", length)
+	}
 	result := make([]string, length)
 	bookname := ConvertStringToUTF(docp.Find("h1").Text(), "gbk", "utf-8") + ".txt"
 	listnode.Each(func(i int, s *goquery.Selection) {
 		result[i], _ = s.Children().Attr("href")
+		result[i] = "https://" + book.baseburl + result[i]
 		fmt.Println(result[i])
-		result[i] = book.baseburl + result[i]
 	})
 	return result, length, bookname
 
