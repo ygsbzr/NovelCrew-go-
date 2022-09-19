@@ -25,10 +25,19 @@ type Config struct {
 func main() {
 	var baseurl string
 	var remap map[string]string = make(map[string]string)
+	var docmap map[string]string = make(map[string]string)
 	remap["www.zhhbq.com"] = `<script>[\s\S]*?</div>([\s\S]*?)<script>`
 	remap["www.xbiquge.la"] = `([\s\S]*?)<p>`
 	remap["www.ddyueshu.com"] = `([\s\S]*?)<p>`
 	remap["www.qu-la.com"] = `([\s\S]*)`
+	remap["www.88gp.net"] = `([\s\S]*)`
+	remap["www.biqugesk.org"] = `([\s\S]*)`
+	docmap["www.zhhbq.com"] = "div#content"
+	docmap["www.xbiquge.la"] = "div#content"
+	docmap["www.ddyueshu.com"] = "div#content"
+	docmap["www.qu-la.com"] = "div[id=chapter-title]~div"
+	docmap["www.88gp.net"] = "p#articlecontent"
+	docmap["www.biqugesk.org"] = "div#booktext"
 
 	var config Config
 	CreateDir("./tmp")
@@ -53,7 +62,7 @@ func main() {
 	config.BookWebUrl = mybook.baseburl
 	hrefs, len, bookname := mybook.GetAllChapter()
 	for i := config.Lastchapter; i <= len; i++ {
-		go AnalyisText(hrefs, chapterc, i, &config, remap[config.BookWebUrl])
+		go AnalyisText(hrefs, chapterc, i, &config, remap[config.BookWebUrl], docmap[config.BookWebUrl])
 	}
 	for i := config.Lastchapter; i <= len; i++ {
 		fmt.Println(<-chapterc)
@@ -61,7 +70,7 @@ func main() {
 	fmt.Println("开始整合")
 	AppendFile("./dist/"+bookname, len)
 }
-func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string) {
+func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string, section string) {
 	filep, _ := os.Create("tmp/" + strconv.Itoa(i) + ".txt")
 	defer filep.Close()
 	var textresult string = ""
@@ -74,7 +83,6 @@ func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string) 
 		fmt.Println("Not 200 code")
 		c <- "第" + strconv.Itoa(i) + "章爬取失败"
 		conf.Lastchapter = i
-		return
 	}
 	fmt.Println("200 code")
 	doc, err := goquery.NewDocumentFromReader(res.Body)
@@ -84,10 +92,7 @@ func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string) 
 		return
 	}
 	splitc := "\n \n \n"
-	chapterNode := doc.Find("div#content")
-	if chapterNode.Length() == 0 {
-		chapterNode = doc.Find("div[id=chapter-title]~div")
-	}
+	chapterNode := doc.Find(section)
 	findCPName := regexp.MustCompile(re)
 	chapter, reerr := chapterNode.Html()
 	if reerr != nil {
@@ -98,7 +103,9 @@ func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string) 
 	chaptername := doc.Find("h1").Text()
 	article := realchapter[1]
 	textresult = textresult + chaptername + splitc + article
-	textresult = ConvertStringToUTF(textresult, "gbk", "utf-8")
+	if conf.BookWebUrl != "www.xbiquge.la" {
+		textresult = ConvertStringToUTF(textresult, "gbk", "utf-8")
+	}
 	filep.WriteString(textresult)
 	time.Sleep(time.Second)
 	c <- "第" + strconv.Itoa(i) + "章爬取成功"
@@ -124,18 +131,22 @@ func (book *Book) GetAllChapter() ([]string, int, string) {
 	docp, _ := goquery.NewDocumentFromReader(res.Body)
 	listnode := docp.Find("dd")
 	length := listnode.Length()
-	fmt.Println("len:", length)
 	if length == 0 {
 		listnode = docp.Find("li")
 		length = listnode.Length()
-		fmt.Println("len:", length)
 	}
 	result := make([]string, length)
-	bookname := ConvertStringToUTF(docp.Find("h1").Text(), "gbk", "utf-8") + ".txt"
+	bookname := ""
+	if book.baseburl != "www.xbiquge.la" {
+		bookname = ConvertStringToUTF(docp.Find("h1").Text(), "gbk", "utf-8") + ".txt"
+	} else {
+		bookname = docp.Find("h1").Text() + ".txt"
+	}
 	listnode.Each(func(i int, s *goquery.Selection) {
 		result[i], _ = s.Children().Attr("href")
-		result[i] = "https://" + book.baseburl + result[i]
-		fmt.Println(result[i])
+		if book.baseburl != "www.biqugesk.org" {
+			result[i] = "https://" + book.baseburl + result[i]
+		}
 	})
 	return result, length, bookname
 

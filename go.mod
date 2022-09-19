@@ -1,4 +1,4 @@
-module firstspider
+module novelcrew
 
 go 1.19
 
