@@ -39,8 +39,8 @@ func CreateDir(path string) {
 }
 func AppendFile(distpath string, cnum int) {
 	dist, err := os.OpenFile(distpath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	outtestr := outTE.Text()
 	if err != nil {
-		fmt.Println("fileerr:", err)
 		return
 	}
 	defer dist.Close()
@@ -48,7 +48,6 @@ func AppendFile(distpath string, cnum int) {
 
 		pagefile, pageerr := os.Open("tmp/" + strconv.Itoa(i) + ".txt")
 		if pageerr != nil {
-			fmt.Println("open fileerr:", pageerr)
 			return
 		}
 		read := bufio.NewReader(pagefile)
@@ -78,7 +77,8 @@ func AppendFile(distpath string, cnum int) {
 		}
 		pagefile.Close()
 	}
-	fmt.Println("整理完毕:", strings.Replace(distpath, "./dist/", "", 1), strconv.Itoa(cnum), "章")
+	outtestr += "整理完毕:" + strings.Replace(distpath, "./dist/", "", 1) + " " + "共" + strconv.Itoa(cnum) + "章\n"
+	outTE.SetText(outtestr)
 	os.RemoveAll("./tmp")
 }
 func OpenFileAndRead(path string) []byte {
@@ -98,5 +98,4 @@ func OpenFileAndWrite(buf []byte, path string) {
 	}
 	defer f.Close()
 	f.Write(buf)
-	fmt.Println("已写入文件")
 }

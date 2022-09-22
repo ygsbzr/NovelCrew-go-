@@ -1,31 +1,38 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/lxn/walk"
+	. "github.com/lxn/walk/declarative"
+	"github.com/lxn/win"
 )
+
+var remap map[string]string = make(map[string]string)
+var docmap map[string]string = make(map[string]string)
 
 type Book struct {
 	baseburl   string
 	booknumber string
 }
-type Config struct {
-	BaseurlC    string
-	Lastchapter int
-	BookWebUrl  string
-}
 
+var mainWindow *walk.MainWindow
+var inTE, outTE *walk.TextEdit
+var textPL *walk.TextLabel
+var siteText *walk.TextLabel
+
+func GetSystemMetrics(nIndex int) int {
+	ret, _, _ := syscall.NewLazyDLL(`User32.dll`).NewProc(`GetSystemMetrics`).Call(uintptr(nIndex))
+	return int(ret)
+}
 func main() {
-	var baseurl string
-	var remap map[string]string = make(map[string]string)
-	var docmap map[string]string = make(map[string]string)
 	remap["www.zhhbq.com"] = `<script>[\s\S]*?</div>([\s\S]*?)<script>`
 	remap["www.xbiquge.la"] = `([\s\S]*?)<p>`
 	remap["www.ddyueshu.com"] = `([\s\S]*?)<p>`
@@ -38,39 +45,45 @@ func main() {
 	docmap["www.qu-la.com"] = "div[id=chapter-title]~div"
 	docmap["www.88gp.net"] = "p#articlecontent"
 	docmap["www.biqugesk.org"] = "div#booktext"
-
-	var config Config
-	CreateDir("./tmp")
-	CreateDir("./dist")
-	chapterc := make(chan string)
-	if hasconf, _ := HasDir("./config.json"); hasconf {
-		json.Unmarshal(OpenFileAndRead("./config.json"), &config)
-		baseurl = config.BaseurlC
-	} else {
-		fmt.Println("无config,请输入基础网址")
-		fmt.Scan(&baseurl)
-		config = Config{
-			BaseurlC:    baseurl,
-			Lastchapter: 1,
-			BookWebUrl:  "",
-		}
-		configdata, _ := json.Marshal(config)
-		OpenFileAndWrite(configdata, "./config.json")
+	screenX, screenY := GetSystemMetrics(0), GetSystemMetrics(1)
+	width, height := 1000, 900
+	sites := "支持的网址："
+	for site, _ := range docmap {
+		sites += site + ","
 	}
-	var mybook Book
-	mybook.GetNewBook(baseurl)
-	config.BookWebUrl = mybook.baseburl
-	hrefs, len, bookname := mybook.GetAllChapter()
-	for i := config.Lastchapter; i <= len; i++ {
-		go AnalyisText(hrefs, chapterc, i, &config, remap[config.BookWebUrl], docmap[config.BookWebUrl])
+	err := MainWindow{
+		Title:    "简易爬虫",
+		AssignTo: &mainWindow,
+		Layout:   VBox{},
+		Bounds:   Rectangle{Width: width, Height: height, X: (screenX - width) / 2, Y: (screenY - height) / 2},
+		Children: []Widget{
+			TextLabel{AssignTo: &textPL, Text: "爬小说", TextAlignment: AlignHCenterVCenter},
+			HSplitter{
+				Children: []Widget{
+					TextEdit{AssignTo: &inTE},
+					TextEdit{AssignTo: &outTE, ReadOnly: true},
+				},
+			},
+			TextLabel{AssignTo: &siteText, Text: sites},
+			PushButton{
+				Text: "开始爬取",
+				OnClicked: func() {
+					Start()
+				},
+			},
+		},
+	}.Create()
+	if err != nil {
+		walk.MsgBox(nil, "错误", err.Error(), walk.MsgBoxIconError)
+		return
 	}
-	for i := config.Lastchapter; i <= len; i++ {
-		fmt.Println(<-chapterc)
-	}
-	fmt.Println("开始整合")
-	AppendFile("./dist/"+bookname, len)
+	hwhd := mainWindow.Handle()
+	currstyle := win.GetWindowLong(hwhd, win.GWL_STYLE)
+	win.SetWindowLong(hwhd, win.GWL_STYLE, currstyle & ^win.WS_SIZEBOX)
+	mainWindow.Run()
+	defer mainWindow.Close()
 }
-func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string, section string) {
+func AnalyisText(hrefs []string, c chan string, i int, re string, section string, book *Book) {
 	filep, _ := os.Create("tmp/" + strconv.Itoa(i) + ".txt")
 	defer filep.Close()
 	var textresult string = ""
@@ -82,7 +95,6 @@ func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string, 
 	if res.StatusCode != 200 {
 		fmt.Println("Not 200 code")
 		c <- "第" + strconv.Itoa(i) + "章爬取失败"
-		conf.Lastchapter = i
 	}
 	fmt.Println("200 code")
 	doc, err := goquery.NewDocumentFromReader(res.Body)
@@ -103,7 +115,7 @@ func AnalyisText(hrefs []string, c chan string, i int, conf *Config, re string, 
 	chaptername := doc.Find("h1").Text()
 	article := realchapter[1]
 	textresult = textresult + chaptername + splitc + article
-	if conf.BookWebUrl != "www.xbiquge.la" {
+	if book.baseburl != "www.xbiquge.la" {
 		textresult = ConvertStringToUTF(textresult, "gbk", "utf-8")
 	}
 	filep.WriteString(textresult)
@@ -150,4 +162,22 @@ func (book *Book) GetAllChapter() ([]string, int, string) {
 	})
 	return result, length, bookname
 
+}
+func Start() {
+	outTE.SetText("Start")
+	CreateDir("./tmp")
+	CreateDir("./dist")
+	chapterc := make(chan string)
+	baseurl := inTE.Text()
+	var mybook Book
+	mybook.GetNewBook(baseurl)
+	hrefs, len, bookname := mybook.GetAllChapter()
+	for i := 1; i <= len; i++ {
+		go AnalyisText(hrefs, chapterc, i, remap[mybook.baseburl], docmap[mybook.baseburl], &mybook)
+	}
+	for i := 1; i <= len; i++ {
+		fmt.Println(<-chapterc)
+	}
+	outTE.SetText("爬取完毕，开始整合\n")
+	AppendFile("./dist/"+bookname, len)
 }
